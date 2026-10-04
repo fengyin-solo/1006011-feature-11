@@ -18,11 +18,102 @@
       </article>
     </div>
 
+    <section class="release-panel">
+      <header class="release-panel-head">
+        <div>
+          <h3>航班保障台账 · 放行待办</h3>
+          <p class="page-desc">放行结论直接取自机务勤务任务链，台账只做存根；每次读取自动对账，状态不一致时当场纠正。</p>
+        </div>
+        <div class="page-actions">
+          <button class="btn" type="button" @click="loadReleaseBoard">重新对账</button>
+        </div>
+      </header>
+
+      <p class="basis-text">判定依据：{{ releaseBoard.basis }}</p>
+
+      <div class="stat-row">
+        <article class="stat-card">
+          <span class="stat-label">待放行（机务已提交待确认）</span>
+          <strong class="stat-value">{{ releaseBoard.todos.length }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">已放行（结论已生效）</span>
+          <strong class="stat-value">{{ releaseBoard.released.length }}</strong>
+        </article>
+      </div>
+
+      <p v-if="releaseBoard.corrections.length" class="error-text">
+        本次对账发现并纠正 {{ releaseBoard.corrections.length }} 处台账与任务链不一致：
+      </p>
+      <ul v-if="releaseBoard.corrections.length" class="correction-list">
+        <li v-for="(item, index) in releaseBoard.corrections" :key="index">{{ item }}</li>
+      </ul>
+
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>勤务任务编号</th>
+            <th>航班号</th>
+            <th>检查单号</th>
+            <th>放行状态</th>
+            <th>放行人员</th>
+            <th>提交放行时间</th>
+            <th>放行时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in releaseBoard.todos" :key="`todo-${item.taskId}`">
+            <td>{{ item.taskNo }}</td>
+            <td>{{ item.flightNo }}</td>
+            <td>{{ item.checkSheetNo || '—' }}</td>
+            <td><span class="status-tag" data-status="待放行">{{ item.releaseStatus }}</span></td>
+            <td>{{ item.releaser || '待放行人员确认' }}</td>
+            <td>{{ item.submittedAt || '—' }}</td>
+            <td>—</td>
+          </tr>
+          <tr v-if="!releaseBoard.todos.length">
+            <td colspan="7" class="empty-state">当前没有待放行任务</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4 class="release-subtitle">已放行记录（只读，以任务链为准）</h4>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>勤务任务编号</th>
+            <th>航班号</th>
+            <th>检查单号</th>
+            <th>放行状态</th>
+            <th>放行人员</th>
+            <th>提交放行时间</th>
+            <th>放行时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in releaseBoard.released" :key="`done-${item.taskId}`">
+            <td>{{ item.taskNo }}</td>
+            <td>{{ item.flightNo }}</td>
+            <td>{{ item.checkSheetNo || '—' }}</td>
+            <td><span class="status-tag" data-status="已放行">{{ item.releaseStatus }}</span></td>
+            <td>{{ item.releaser || '—' }}</td>
+            <td>{{ item.submittedAt || '—' }}</td>
+            <td>{{ item.releasedAt || '—' }}</td>
+          </tr>
+          <tr v-if="!releaseBoard.released.length">
+            <td colspan="7" class="empty-state">暂无已放行记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
       </span>
     </p>
+
+    <h4 class="release-subtitle">航班保障任务清单</h4>
 
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
@@ -79,7 +170,11 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { reconcileReleaseLedger } from '@/data/release-ledger'
+import type { ReleaseLedgerView } from '@/data/release-ledger'
 import type { EntryRow } from '@/data/types'
+
+const emptyReleaseBoard = (): ReleaseLedgerView => ({ todos: [], released: [], corrections: [], basis: '' })
 
 const meta = moduleMeta('flight')
 const columns = ["保障编号", "航班号", "机型", "计划到达", "机位号", "保障等级", "保障班组", "保障状态"]
@@ -91,6 +186,7 @@ const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
+const releaseBoard = ref<ReleaseLedgerView>(emptyReleaseBoard())
 const filterFields = columns.slice(0, 3)
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
@@ -122,12 +218,22 @@ function runAction(action: string, row: EntryRow) {
   reload()
 }
 
+function loadReleaseBoard() {
+  errorMessage.value = ''
+  try {
+    releaseBoard.value = reconcileReleaseLedger()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '放行待办读取失败'
+  }
+}
+
 function reload() {
   errorMessage.value = ''
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    loadReleaseBoard()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '航班保障列表读取失败'
   }

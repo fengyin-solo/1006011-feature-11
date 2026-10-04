@@ -38,19 +38,22 @@
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
           <th>当前状态</th>
+          <th>放行核验</th>
           <th>可执行动作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="String(row.id)">
+        <tr v-for="row in rows" :key="String(row.id)" :class="{ 'row-abnormal': row.abnormal }">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
+          <td>{{ releaseCheck(row) }}</td>
           <td class="row-actions">
             <button
               v-for="action in actions"
               :key="action"
               class="link"
               type="button"
+              :disabled="!rowActions(row).includes(action)"
               @click="runAction(action, row)"
             >
               {{ action }}
@@ -58,7 +61,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无机务勤务数据，可先登记勤务任务</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无机务勤务数据，可先登记勤务任务</td>
         </tr>
       </tbody>
     </table>
@@ -74,9 +77,11 @@
 import { computed, onMounted, ref } from 'vue'
 
 import {
+  allowedActions,
   downloadEntries,
   listEntries,
   moduleMeta,
+  releaseCheckText,
   runAction as applyAction,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
@@ -102,6 +107,14 @@ const statusSummary = computed(() =>
 function resetFilters() {
   filters.value = {}
   reload()
+}
+
+function rowActions(row: EntryRow): string[] {
+  return allowedActions(meta.key, row)
+}
+
+function releaseCheck(row: EntryRow): string {
+  return releaseCheckText(row)
 }
 
 function exportRows() {

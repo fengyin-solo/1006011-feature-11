@@ -1,6 +1,18 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import {
+  flightReleaseLedger,
+  isEffectiveRelease,
+  nextLineAction,
+  reconcileLineRelease,
+  releaseCheckText,
+  runLineAction,
+} from '@/api/line-release'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+
+// 机务勤务的放行链与航班保障台账的放行待办都住在 line-release.ts，这里统一再导出，
+// 页面仍然只从 local-service 取数。
+export { flightReleaseLedger, isEffectiveRelease, releaseCheckText }
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -24,11 +36,28 @@ export function filterRows(rows: EntryRow[], filters: Record<string, string>): E
 }
 
 export function listEntries(key: string, filters: Record<string, string> = {}): PageResult {
+  if (key === 'line') {
+    // 列表读取前先过一遍完整性核验，状态与检查单号对不上的任务当场标异常。
+    reconcileLineRelease()
+  }
   const matched = filterRows(listRows(key), filters)
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
+/** 这条记录当前允许点哪些动作。勤务任务走放行链，其它模块维持原样全部可点。 */
+export function allowedActions(key: string, row: EntryRow): string[] {
+  if (key === 'line') {
+    const action = nextLineAction(String(row.status))
+    return action ? [action] : []
+  }
+  return moduleMeta(key).actions
+}
+
 export function runAction(key: string, id: number, action: string): ActionResult {
+  if (key === 'line') {
+    // 勤务任务的放行是一条链：逐级推进、检查单号唯一、已放行不回退，规则见 line-release.ts。
+    return runLineAction(id, action)
+  }
   const meta = moduleMeta(key)
   const target = meta.actionTargets[action]
   if (!target) {

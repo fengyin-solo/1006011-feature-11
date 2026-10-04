@@ -16,6 +16,10 @@
         <span class="stat-label">{{ item.label }}</span>
         <strong class="stat-value">{{ item.value }}</strong>
       </article>
+      <article class="stat-card">
+        <span class="stat-label">放行待办</span>
+        <strong class="stat-value">{{ releaseTodoCount }}</strong>
+      </article>
     </div>
 
     <p class="status-legend">
@@ -38,6 +42,7 @@
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
           <th>当前状态</th>
+          <th>勤务放行</th>
           <th>可执行动作</th>
         </tr>
       </thead>
@@ -45,6 +50,7 @@
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
+          <td :class="{ 'error-text': releaseOf(row)?.todo }">{{ releaseText(row) }}</td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -58,7 +64,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无航班保障数据，可先登记航班保障任务</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无航班保障数据，可先登记航班保障任务</td>
         </tr>
       </tbody>
     </table>
@@ -75,10 +81,12 @@ import { computed, onMounted, ref } from 'vue'
 
 import {
   downloadEntries,
+  flightReleaseLedger,
   listEntries,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import type { FlightRelease } from '@/api/line-release'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('flight')
@@ -92,12 +100,37 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+// 放行待办台账：每次进页面/刷新都从勤务任务现算，不落地存放，保证和勤务那边读的是同一份。
+const ledger = ref<FlightRelease[]>([])
+const releaseTodoCount = computed(() => ledger.value.filter((item) => item.todo).length)
+const ledgerByFlightId = computed(() => {
+  const map = new Map<number, FlightRelease>()
+  for (const item of ledger.value) {
+    map.set(item.flightId, item)
+  }
+  return map
+})
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function releaseOf(row: EntryRow): FlightRelease | undefined {
+  return ledgerByFlightId.value.get(Number(row.id))
+}
+
+function releaseText(row: EntryRow): string {
+  const item = releaseOf(row)
+  if (!item) {
+    return '—'
+  }
+  if (item.linked === 0) {
+    return '未关联勤务'
+  }
+  return `${item.state} ${item.released}/${item.linked}`
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +161,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    ledger.value = flightReleaseLedger()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '航班保障列表读取失败'
   }
